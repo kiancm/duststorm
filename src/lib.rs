@@ -2,22 +2,19 @@ use std::io::{stderr, stdin, stdout, Write};
 
 use serde::{Deserialize, Serialize};
 
-pub struct Server {
-    pub node: Box<dyn Node>,
-}
-
+pub struct Server;
 impl Server {
-    pub fn run(&mut self) -> std::io::Result<()> {
+    pub fn run<I, O: Serialize>(&self, node: &mut impl Node<I, O>) -> std::io::Result<()>
+        where for<'a> I: Deserialize<'a> + Serialize
+    {
         let mut stdout = stdout().lock();
         let mut stderr = stderr().lock();
         let mut input = stdin().lines();
         let line = input.next().expect("first message must be init")?;
-        let init_request: Message = serde_json::from_str(&line)?;
-        let init_response = self.node.handle_init(&init_request);
-        let init_response = match init_response {
-            Ok(m) => m,
-            Err(m) => m,
-        };
+        let init_request: Message<Init> = serde_json::from_str(&line)?;
+        let init_response = node.handle_init(&init_request);
+        let init_response = self.flatten_result(init_response);
+
         serde_json::to_writer(&mut stdout, &init_response)?;
         stdout.write_all(b"\n")?;
 
@@ -30,12 +27,10 @@ impl Server {
         for line in input {
             let line = line?;
             serde_json::to_writer_pretty(&mut stderr, &line)?;
-            let req: Message = serde_json::from_str(&line)?;
-            let res = self.node.handle(&req);
-            let res = match res {
-                Ok(m) => m,
-                Err(m) => m,
-            };
+            let req: Message<I> = serde_json::from_str(&line)?;
+            let res = node.handle(&req);
+            let res = self.flatten_result(res);
+
             serde_json::to_writer(&mut stdout, &res)?;
             stdout.write_all(b"\n")?;
 
@@ -49,18 +44,32 @@ impl Server {
         }
         Ok(())
     }
+
+    fn flatten_result<T>(&self, result: Result<Message<T>, Message<Error>>) -> Message<BodyOrError<T>> {
+        match result {
+            Ok(ok) => Message { meta: ok.meta, body: Body { common: ok.body.common, custom: BodyOrError::Body(ok.body.custom) } },
+            Err(err) => Message { meta: err.meta, body: Body { common: err.body.common, custom: BodyOrError::Error(err.body.custom) } },
+        }
+    }
 }
 
-pub trait Node {
-    fn handle_init(&mut self, message: &Message) -> Result<Message, Message>;
-    fn handle(&mut self, message: &Message) -> Result<Message, Message>;
+pub trait Node<I, O> {
+    fn handle_init(&mut self, message: &Message<Init>) -> Result<Message<InitOk>, Message<Error>>;
+    fn handle(&mut self, message: &Message<I>) -> Result<Message<O>, Message<Error>>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Message {
+pub struct Message<T> {
     #[serde(flatten)]
     pub meta: Meta,
-    pub body: Body,
+    pub body: Body<T>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+enum BodyOrError<B> {
+    Body(B),
+    Error(Error)
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -79,29 +88,32 @@ impl Meta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Body {
+pub struct Body<T> {
     #[serde(flatten)]
     pub common: CommonBody,
     #[serde(flatten)]
-    pub custom: CustomBody,
+    pub custom: T,
 }
 
-impl Message {
+impl Message<InitOk> {
     pub fn init_ok(common_body: CommonBody, meta: Meta) -> Self {
         Self {
             meta,
             body: Body {
                 common: common_body,
-                custom: CustomBody::InitOk,
+                custom: InitOk::InitOk,
             },
         }
     }
+}
+
+impl Message<Error> {
     pub fn error(common_body: CommonBody, meta: Meta, error: Error) -> Self {
         Self {
             meta,
             body: Body {
                 common: common_body,
-                custom: CustomBody::Error(error),
+                custom: error,
             },
         }
     }
@@ -117,36 +129,19 @@ pub struct CommonBody {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum CustomBody {
-    Init(Init),
-    InitOk,
-    Echo(Echo),
-    EchoOk(EchoOk),
-    Generate,
-    GenerateOk(GenerateOk),
-    Error(Error),
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct Init {
     pub node_id: String,
     pub node_ids: Vec<String>,
 }
+
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Echo {
-    pub echo: String,
-}
-#[derive(Serialize, Deserialize, Debug)]
-pub struct EchoOk {
-    pub echo: String,
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum InitOk {
+    InitOk,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct GenerateOk {
-    pub id: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub struct Error {
     pub code: ErrorCode,
 }

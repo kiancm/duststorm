@@ -1,27 +1,36 @@
 use duststorm::*;
+use serde::{Deserialize, Serialize};
 
 fn main() -> std::io::Result<()> {
-    let mut echo_server = Server {
-        node: Box::new(EchoNode),
-    };
-    echo_server.run()?;
+    Server.run(&mut EchoNode)?;
     Ok(())
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename = "echo")]
+struct Echo {
+    echo: String,
+}
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(tag = "type", rename = "echo_ok")]
+struct EchoOk {
+    echo: String,
 }
 
 struct EchoNode;
 
-fn echo_ok(common_body: CommonBody, meta: Meta, echo_ok: EchoOk) -> Message {
+fn echo_ok(common_body: CommonBody, meta: Meta, echo_ok: EchoOk) -> Message<EchoOk> {
     Message {
         meta,
         body: Body {
             common: common_body,
-            custom: CustomBody::EchoOk(echo_ok),
+            custom: echo_ok,
         },
     }
 }
 
-impl Node for EchoNode {
-    fn handle_init(&mut self, message: &Message) -> Result<Message, Message> {
+impl Node<Echo, EchoOk> for EchoNode {
+    fn handle_init(&mut self, message: &Message<Init>) -> Result<Message<InitOk>, Message<Error>> {
         Ok(Message::init_ok(
             CommonBody {
                 msg_id: None,
@@ -31,27 +40,18 @@ impl Node for EchoNode {
         ))
     }
 
-    fn handle(&mut self, message: &Message) -> Result<Message, Message> {
+    fn handle(&mut self, message: &Message<Echo>) -> Result<Message<EchoOk>, Message<Error>> {
         let common_body = CommonBody {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
         };
         let meta = Meta::flip(&message.meta);
-        match &message.body.custom {
-            CustomBody::Echo(Echo { echo }) => Ok(echo_ok(
-                common_body,
-                meta,
-                EchoOk {
-                    echo: echo.to_string(),
-                },
-            )),
-            _ => Err(Message::error(
-                common_body,
-                meta,
-                Error {
-                    code: ErrorCode::MalformedRequest,
-                },
-            )),
-        }
+        Ok(echo_ok(
+            common_body,
+            meta,
+            EchoOk {
+                echo: message.body.custom.echo.to_string(),
+            },
+        ))
     }
 }

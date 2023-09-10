@@ -2,18 +2,12 @@ use std::io::{stderr, stdin, stdout, Write};
 
 use serde::{Deserialize, Serialize};
 
-fn main() -> std::io::Result<()> {
-    let echo_server = Server { node: Box::new(EchoNode) };
-    echo_server.run()?;
-    Ok(())
-}
-
-struct Server {
-    node: Box<dyn Node>,
+pub struct Server {
+    pub node: Box<dyn Node>,
 }
 
 impl Server {
-    fn run(&self) -> std::io::Result<()> {
+    pub fn run(&mut self) -> std::io::Result<()> {
         let mut stdout = stdout().lock();
         let mut stderr = stderr().lock();
         let mut input = stdin().lines();
@@ -57,26 +51,26 @@ impl Server {
     }
 }
 
-trait Node {
-    fn handle_init(&self, message: &Message) -> Result<Message, Message>;
-    fn handle(&self, message: &Message) -> Result<Message, Message>;
+pub trait Node {
+    fn handle_init(&mut self, message: &Message) -> Result<Message, Message>;
+    fn handle(&mut self, message: &Message) -> Result<Message, Message>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Message {
+pub struct Message {
     #[serde(flatten)]
-    meta: Meta,
-    body: Body,
+    pub meta: Meta,
+    pub body: Body,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct Meta {
-    src: String,
-    dest: String,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Meta {
+    pub src: String,
+    pub dest: String,
 }
 
 impl Meta {
-    fn flip(meta: &Meta) -> Meta {
+    pub fn flip(meta: &Meta) -> Meta {
         Meta {
             src: meta.dest.to_owned(),
             dest: meta.src.to_owned()
@@ -85,57 +79,27 @@ impl Meta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Body {
-    #[serde(rename = "type")]
-    message_type: String,
+pub struct Body {
     #[serde(flatten)]
-    common: CommonBody,
+    pub common: CommonBody,
     #[serde(flatten)]
-    custom: CustomBody,
+    pub custom: CustomBody,
 }
 
 impl Message {
-    fn init(common_body: CommonBody, meta: Meta, init: Init) -> Message {
+    pub fn init_ok(common_body: CommonBody, meta: Meta) -> Self {
         Self {
             meta,
             body: Body {
-                message_type: "init".to_string(),
-                common: common_body,
-                custom: CustomBody::Init(init),
-            },
-        }
-    }
-}
-impl Message {
-    fn init_ok(common_body: CommonBody, meta: Meta) -> Self {
-        Self {
-            meta,
-            body: Body {
-                message_type: "init_ok".to_string(),
                 common: common_body,
                 custom: CustomBody::InitOk,
             },
         }
     }
-}
-impl Message {
-    fn echo_ok(common_body: CommonBody, meta: Meta, echo_ok: EchoOk) -> Self {
+    pub fn error(common_body: CommonBody, meta: Meta, error: Error) -> Self {
         Self {
             meta,
             body: Body {
-                message_type: "echo_ok".to_string(),
-                common: common_body,
-                custom: CustomBody::EchoOk(echo_ok),
-            },
-        }
-    }
-}
-impl Message {
-    fn error(common_body: CommonBody, meta: Meta, error: Error) -> Self {
-        Self {
-            meta,
-            body: Body {
-                message_type: "error".to_string(),
                 common: common_body,
                 custom: CustomBody::Error(error),
             },
@@ -143,46 +107,53 @@ impl Message {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct CommonBody {
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CommonBody {
     #[serde(skip_serializing_if = "Option::is_none")]
-    msg_id: Option<u8>,
+    pub msg_id: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    in_reply_to: Option<u8>,
+    pub in_reply_to: Option<u16>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-enum CustomBody {
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CustomBody {
     Init(Init),
+    InitOk,
     Echo(Echo),
     EchoOk(EchoOk),
-    InitOk,
+    Generate,
+    GenerateOk(GenerateOk),
     Error(Error),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Init {
-    node_id: String,
-    node_ids: Vec<String>,
+pub struct Init {
+    pub node_id: String,
+    pub node_ids: Vec<String>,
 }
 #[derive(Serialize, Deserialize, Debug)]
-struct Echo {
-    echo: String,
+pub struct Echo {
+    pub echo: String,
 }
 #[derive(Serialize, Deserialize, Debug)]
-struct EchoOk {
-    echo: String,
+pub struct EchoOk {
+    pub echo: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct Error {
-    code: ErrorCode,
+pub struct GenerateOk {
+    pub id: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Error {
+    pub code: ErrorCode,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 #[repr(u8)]
-enum ErrorCode {
+pub enum ErrorCode {
     Timeout = 0,
     NodeNotFound = 1,
     NotSupported = 10,
@@ -194,30 +165,4 @@ enum ErrorCode {
     KeyAlreadyExists = 21,
     PreconditionFailed = 22,
     TxnConflict = 30,
-}
-
-struct EchoNode;
-
-impl Node for EchoNode {
-    fn handle_init(&self, message: &Message) -> Result<Message, Message> {
-        Ok(Message::init_ok(
-            CommonBody {
-                msg_id: None,
-                in_reply_to: message.body.common.msg_id,
-            },
-            Meta::flip(&message.meta)
-        ))
-    }
-
-    fn handle(&self, message: &Message) -> Result<Message, Message> {
-        let common_body = CommonBody {
-            msg_id: None,
-            in_reply_to: message.body.common.msg_id,
-        };
-        let meta = Meta::flip(&message.meta);
-        match &message.body.custom {
-            CustomBody::Echo(Echo { echo }) => Ok(Message::echo_ok(common_body, meta, EchoOk { echo: echo.to_string() })),
-            _ => Err(Message::error(common_body, meta, Error { code: ErrorCode::MalformedRequest }))
-        }
-    }
 }

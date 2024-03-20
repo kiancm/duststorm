@@ -36,7 +36,7 @@ impl Node<Echo, EchoOk> for EchoNode {
                 msg_id: None,
                 in_reply_to: message.body.common.msg_id,
             },
-            Meta::flip(&message.meta),
+            Meta::reply(&message.meta),
         ))
     }
 
@@ -45,7 +45,7 @@ impl Node<Echo, EchoOk> for EchoNode {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
         };
-        let meta = Meta::flip(&message.meta);
+        let meta = Meta::reply(&message.meta);
         Ok(echo_ok(
             common_body,
             meta,

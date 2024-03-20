@@ -46,7 +46,7 @@ impl Node<Generate, GenerateOk> for GenerateNode {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
         };
-        let meta = Meta::flip(&message.meta);
+        let meta = Meta::reply(&message.meta);
 
         match message.body.custom.node_id[1..].parse() {
             Ok(id) => {
@@ -72,7 +72,7 @@ impl Node<Generate, GenerateOk> for GenerateNode {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
         };
-        let meta = Meta::flip(&message.meta);
+        let meta = Meta::reply(&message.meta);
 
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

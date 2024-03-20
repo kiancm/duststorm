@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 pub struct Server;
 impl Server {
     pub fn run<I, O: Serialize>(&self, node: &mut impl Node<I, O>) -> std::io::Result<()>
-        where for<'a> I: Deserialize<'a> + Serialize
+    where
+        for<'a> I: Deserialize<'a> + Serialize,
     {
         let mut stdout = stdout().lock();
         let mut stderr = stderr().lock();
@@ -45,10 +46,25 @@ impl Server {
         Ok(())
     }
 
-    fn flatten_result<T>(&self, result: Result<Message<T>, Message<Error>>) -> Message<BodyOrError<T>> {
+    fn flatten_result<T>(
+        &self,
+        result: Result<Message<T>, Message<Error>>,
+    ) -> Message<BodyOrError<T>> {
         match result {
-            Ok(ok) => Message { meta: ok.meta, body: Body { common: ok.body.common, custom: BodyOrError::Body(ok.body.custom) } },
-            Err(err) => Message { meta: err.meta, body: Body { common: err.body.common, custom: BodyOrError::Error(err.body.custom) } },
+            Ok(ok) => Message {
+                meta: ok.meta,
+                body: Body {
+                    common: ok.body.common,
+                    custom: BodyOrError::Body(ok.body.custom),
+                },
+            },
+            Err(err) => Message {
+                meta: err.meta,
+                body: Body {
+                    common: err.body.common,
+                    custom: BodyOrError::Error(err.body.custom),
+                },
+            },
         }
     }
 }
@@ -69,7 +85,7 @@ pub struct Message<T> {
 #[serde(untagged)]
 enum BodyOrError<B> {
     Body(B),
-    Error(Error)
+    Error(Error),
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -79,10 +95,10 @@ pub struct Meta {
 }
 
 impl Meta {
-    pub fn flip(meta: &Meta) -> Meta {
+    pub fn reply(meta: &Meta) -> Meta {
         Meta {
             src: meta.dest.to_owned(),
-            dest: meta.src.to_owned()
+            dest: meta.src.to_owned(),
         }
     }
 }

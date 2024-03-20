@@ -88,7 +88,14 @@ impl Node<Generate, GenerateOk> for GenerateNode {
             .and_then(|timestamp| {
                 // snowflake id := 40 bit timestamp | 8 bit node id | 16 bit sequence number
                 let timestamp_part = (timestamp.as_millis() >> (128 - 40)) as u64;
-                let id_part = (self.id.unwrap() as u64) << 16;
+                let id = self.id.ok_or(Message::error(
+                    common_body.clone(),
+                    meta.clone(),
+                    Error {
+                        code: ErrorCode::Abort,
+                    },
+                ))?;
+                let id_part = (id as u64) << 16;
                 let seq_part = self.seq as u64;
                 let snowflake = timestamp_part | id_part | seq_part;
                 self.seq += 1;

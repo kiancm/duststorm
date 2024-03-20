@@ -19,5 +19,8 @@ Cargo.lock
 /target
 
 # maelstrom
-maelstrom/
 store/
+
+# nix
+.direnv/
+result

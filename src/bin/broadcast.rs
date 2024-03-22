@@ -19,6 +19,7 @@ enum Broadcast {
     },
     Gossip {
         message: i32,
+        recipients: Vec<String>,
     },
     Read,
     Topology {
@@ -62,7 +63,7 @@ impl Node<Broadcast> for BroadcastNode {
             Broadcast::Broadcast { message: msg } => {
                 self.messages.push(msg.clone());
                 for neighbor in &self.neighbors {
-                    let gossip = self.gossip(neighbor, msg);
+                    let gossip = self.make_gossip(neighbor, msg);
                     sender.send(gossip)?;
                 }
                 let reply = message.reply(BroadcastOk::BroadcastOk);
@@ -80,12 +81,19 @@ impl Node<Broadcast> for BroadcastNode {
                 let reply = message.reply(BroadcastOk::TopologyOk);
                 sender.send(reply)?;
             }
-            Broadcast::Gossip { message: msg } => {
+            Broadcast::Gossip {
+                message: msg,
+                recipients,
+            } => {
                 if !self.messages.contains(msg) {
                     self.messages.push(msg.clone());
+                    let mut new_recipients = recipients.clone();
+                    new_recipients.extend(self.neighbors.clone());
                     for neighbor in &self.neighbors {
-                        let gossip = self.gossip(neighbor, msg);
-                        sender.send(gossip)?;
+                        if neighbor != &message.meta.src && !recipients.contains(&neighbor) {
+                            let gossip = self.make_gossip_to(&new_recipients, neighbor, msg);
+                            sender.send(gossip)?;
+                        }
                     }
                 }
             }
@@ -109,13 +117,47 @@ impl BroadcastNode {
         }
     }
 
-    fn gossip(&self, neighbor: &str, msg: &i32) -> Message<Broadcast> {
+    fn gossip(
+        &self,
+        sender: &mut Sender,
+        neighbors: &Vec<String>,
+        msg: &i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        for neighbor in neighbors {
+            let gossip = Message {
+                meta: Meta {
+                    src: self.node_id.as_ref().unwrap().clone(),
+                    dest: neighbor.to_string(),
+                },
+                body: Body::new(Broadcast::Gossip {
+                    message: *msg,
+                    recipients: neighbors.clone(),
+                }),
+            };
+            sender.send(gossip)?;
+        }
+        Ok(())
+    }
+
+    fn make_gossip_to(
+        &self,
+        neighbors: &Vec<String>,
+        neighbor: &str,
+        msg: &i32,
+    ) -> Message<Broadcast> {
         Message {
             meta: Meta {
                 src: self.node_id.as_ref().unwrap().clone(),
                 dest: neighbor.to_string(),
             },
-            body: Body::new(Broadcast::Gossip { message: *msg }),
+            body: Body::new(Broadcast::Gossip {
+                message: *msg,
+                recipients: neighbors.clone(),
+            }),
         }
+    }
+
+    fn make_gossip(&self, neighbor: &str, msg: &i32) -> Message<Broadcast> {
+        self.make_gossip_to(&self.neighbors, neighbor, msg)
     }
 }

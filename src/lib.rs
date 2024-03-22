@@ -16,7 +16,6 @@ impl Server {
 
         for line in input {
             let line = line?;
-            sender.err.write_all(line.as_bytes())?;
             let req: Message<I> = serde_json::from_str(&line)?;
             node.handle(&req, &mut sender)?;
         }

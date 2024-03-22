@@ -46,28 +46,16 @@ impl Node<Generate> for GenerateNode {
         message: &Message<Init>,
         sender: &mut Sender,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let common_body = CommonBody {
-            msg_id: None,
-            in_reply_to: message.body.common.msg_id,
-        };
-        let meta = Meta::reply(&message.meta);
-
         match message.body.custom.node_id[1..].parse() {
             Ok(id) => {
                 self.id = Some(id);
                 self.seq = 0;
-                let message = Message::init_ok(common_body, meta);
-                sender.send(message)?
+                let reply = message.reply(InitOk::InitOk);
+                sender.send(reply)?
             }
             Err(_) => {
-                let message = Message::error(
-                    common_body,
-                    meta,
-                    Error {
-                        code: ErrorCode::MalformedRequest,
-                    },
-                );
-                sender.send(message)?
+                let error = message.error(ErrorCode::MalformedRequest.into());
+                sender.send(error)?
             }
         };
         Ok(())
@@ -85,25 +73,11 @@ impl Node<Generate> for GenerateNode {
         let meta = Meta::reply(&message.meta);
         let result = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_err| {
-                Message::error(
-                    common_body.clone(),
-                    meta.clone(),
-                    Error {
-                        code: ErrorCode::Abort,
-                    },
-                )
-            })
+            .map_err(|_err| message.error(ErrorCode::Abort.into()))
             .and_then(|timestamp| {
                 // snowflake id := 40 bit timestamp | 8 bit node id | 16 bit sequence number
                 let timestamp_part = (timestamp.as_millis() >> (128 - 40)) as u64;
-                let id = self.id.ok_or(Message::error(
-                    common_body.clone(),
-                    meta.clone(),
-                    Error {
-                        code: ErrorCode::Abort,
-                    },
-                ))?;
+                let id = self.id.ok_or(message.error(ErrorCode::Abort.into()))?;
                 let id_part = (id as u64) << 16;
                 let seq_part = self.seq as u64;
                 let snowflake = timestamp_part | id_part | seq_part;

@@ -19,29 +19,13 @@ struct EchoOk {
 
 struct EchoNode;
 
-fn echo_ok(common_body: CommonBody, meta: Meta, echo_ok: EchoOk) -> Message<EchoOk> {
-    Message {
-        meta,
-        body: Body {
-            common: common_body,
-            custom: echo_ok,
-        },
-    }
-}
-
 impl Node<Echo> for EchoNode {
     fn handle_init(
         &mut self,
         message: &Message<Init>,
         sender: &mut Sender,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let reply = Message::init_ok(
-            CommonBody {
-                msg_id: None,
-                in_reply_to: message.body.common.msg_id,
-            },
-            Meta::reply(&message.meta),
-        );
+        let reply = message.reply(InitOk::InitOk);
         sender.send(reply)?;
         Ok(())
     }
@@ -51,18 +35,9 @@ impl Node<Echo> for EchoNode {
         message: &Message<Echo>,
         sender: &mut Sender,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let common_body = CommonBody {
-            msg_id: None,
-            in_reply_to: message.body.common.msg_id,
-        };
-        let meta = Meta::reply(&message.meta);
-        let reply = echo_ok(
-            common_body,
-            meta,
-            EchoOk {
-                echo: message.body.custom.echo.to_string(),
-            },
-        );
+        let reply = message.reply(EchoOk {
+            echo: message.body.custom.echo.clone(),
+        });
         sender.send(reply)?;
         Ok(())
     }

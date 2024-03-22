@@ -16,6 +16,7 @@ impl Server {
 
         for line in input {
             let line = line?;
+            sender.err.write_all(line.as_bytes())?;
             let req: Message<I> = serde_json::from_str(&line)?;
             node.handle(&req, &mut sender)?;
         }
@@ -72,6 +73,25 @@ pub struct Message<T> {
     pub body: Body<T>,
 }
 
+impl<I> Message<I> {
+    pub fn reply<O>(&self, custom_body: O) -> Message<O> {
+        let meta = self.meta.reply();
+        let body = Body {
+            common: CommonBody {
+                msg_id: None,
+                in_reply_to: self.body.common.msg_id,
+            },
+            custom: custom_body,
+        };
+
+        Message { meta, body }
+    }
+
+    pub fn error(&self, error: Error) -> Message<Error> {
+        self.reply(error)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 enum BodyOrError<B> {
@@ -86,10 +106,10 @@ pub struct Meta {
 }
 
 impl Meta {
-    pub fn reply(meta: &Meta) -> Meta {
-        Meta {
-            src: meta.dest.to_owned(),
-            dest: meta.src.to_owned(),
+    pub fn reply(&self) -> Self {
+        Self {
+            src: self.dest.to_owned(),
+            dest: self.src.to_owned(),
         }
     }
 }
@@ -109,18 +129,6 @@ impl Message<InitOk> {
             body: Body {
                 common: common_body,
                 custom: InitOk::InitOk,
-            },
-        }
-    }
-}
-
-impl Message<Error> {
-    pub fn error(common_body: CommonBody, meta: Meta, error: Error) -> Self {
-        Self {
-            meta,
-            body: Body {
-                common: common_body,
-                custom: error,
             },
         }
     }
@@ -167,4 +175,10 @@ pub enum ErrorCode {
     KeyAlreadyExists = 21,
     PreconditionFailed = 22,
     TxnConflict = 30,
+}
+
+impl Into<Error> for ErrorCode {
+    fn into(self) -> Error {
+        Error { code: self }
+    }
 }

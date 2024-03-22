@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use duststorm::*;
 use serde::{Deserialize, Serialize};
 
@@ -9,12 +11,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Serialize, Deserialize, Debug)]
 struct Topology {}
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Broadcast {
-    Broadcast { message: i32 },
+    Broadcast {
+        message: i32,
+    },
+    Gossip {
+        message: i32,
+    },
     Read,
-    Topology { topology: serde_json::Value },
+    Topology {
+        topology: HashMap<String, Vec<String>>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,6 +35,8 @@ enum BroadcastOk {
 }
 
 struct BroadcastNode {
+    node_id: Option<String>,
+    neighbors: Vec<String>,
     messages: Vec<i32>,
 }
 
@@ -35,14 +46,10 @@ impl Node<Broadcast> for BroadcastNode {
         message: &Message<Init>,
         sender: &mut Sender,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let reply = Message::init_ok(
-            CommonBody {
-                msg_id: None,
-                in_reply_to: message.body.common.msg_id,
-            },
-            Meta::reply(&message.meta),
-        );
+        self.node_id = Some(message.body.custom.node_id.clone());
+        let reply = message.reply(InitOk::InitOk);
         sender.send(reply)?;
+
         Ok(())
     }
 
@@ -51,82 +58,64 @@ impl Node<Broadcast> for BroadcastNode {
         message: &Message<Broadcast>,
         sender: &mut Sender,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let common_body = CommonBody {
-            msg_id: None,
-            in_reply_to: message.body.common.msg_id,
-        };
-        let meta = Meta::reply(&message.meta);
-        match message.body.custom {
-            Broadcast::Broadcast { message } => {
-                self.messages.push(message);
-                let reply = self.broadcast_ok(common_body, meta);
+        match &message.body.custom {
+            Broadcast::Broadcast { message: msg } => {
+                self.messages.push(msg.clone());
+                for neighbor in &self.neighbors {
+                    let gossip = self.gossip(neighbor, msg);
+                    sender.send(gossip)?;
+                }
+                let reply = message.reply(BroadcastOk::BroadcastOk);
                 sender.send(reply)?;
             }
             Broadcast::Read => {
-                let reply = self.read_ok(common_body, meta);
+                let reply = message.reply(self.read_ok());
                 sender.send(reply)?;
             }
-            Broadcast::Topology { topology: _ } => {
-                let reply = self.topology_ok(common_body, meta);
+            Broadcast::Topology { topology } => {
+                self.neighbors = topology
+                    .get(self.node_id.as_ref().unwrap())
+                    .unwrap()
+                    .clone();
+                let reply = message.reply(BroadcastOk::TopologyOk);
                 sender.send(reply)?;
+            }
+            Broadcast::Gossip { message: msg } => {
+                if !self.messages.contains(msg) {
+                    self.messages.push(msg.clone());
+                    for neighbor in &self.neighbors {
+                        let gossip = self.gossip(neighbor, msg);
+                        sender.send(gossip)?;
+                    }
+                }
             }
         };
         Ok(())
     }
-
-    // fn handle(&mut self, message: &Message<Broadcast>) -> Result<Message<BroadcastOk>, Message<Error>> {
-    //     let common_body = CommonBody {
-    //         msg_id: None,
-    //         in_reply_to: message.body.common.msg_id,
-    //     };
-    //     let meta = Meta::reply(&message.meta);
-    //     match message.body.custom {
-    //         Broadcast::Broadcast { message } => {
-    //             self.messages.push(message);
-    //             Ok(self.broadcast_ok(common_body, meta))
-    //         },
-    //         Broadcast::Read => Ok(self.read_ok(common_body, meta)),
-    //         Broadcast::Topology { topology: _ } => Ok(self.topology_ok(common_body, meta)),
-    //     }
-    // }
 }
 
 impl BroadcastNode {
     fn new() -> Self {
         Self {
+            node_id: None,
+            neighbors: Vec::new(),
             messages: Vec::new(),
         }
     }
 
-    fn broadcast_ok(&self, common_body: CommonBody, meta: Meta) -> Message<BroadcastOk> {
-        Message {
-            meta,
-            body: Body {
-                common: common_body,
-                custom: BroadcastOk::BroadcastOk,
-            },
+    fn read_ok(&self) -> BroadcastOk {
+        BroadcastOk::ReadOk {
+            messages: self.messages.clone(),
         }
     }
 
-    fn read_ok(&self, common_body: CommonBody, meta: Meta) -> Message<BroadcastOk> {
+    fn gossip(&self, neighbor: &str, msg: &i32) -> Message<Broadcast> {
         Message {
-            meta,
-            body: Body {
-                common: common_body,
-                custom: BroadcastOk::ReadOk {
-                    messages: self.messages.clone(),
-                },
+            meta: Meta {
+                src: self.node_id.as_ref().unwrap().clone(),
+                dest: neighbor.to_string(),
             },
-        }
-    }
-
-    fn topology_ok(&self, common_body: CommonBody, meta: Meta) -> Message<BroadcastOk> {
-        Message {
-            meta,
-            body: Body {
-                common: common_body,
-                custom: BroadcastOk::TopologyOk,
-            },
+            body: Body::new(Broadcast::Gossip { message: *msg }),
         }
     }
 }

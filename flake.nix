@@ -26,6 +26,18 @@
               cargo build && maelstrom test -w echo --bin target/debug/echo --node-count 1 --time-limit 10
             '';
           })
+          (pkgs.writeShellApplication {
+            name = "broadcast-single-test";
+            text = ''
+              cargo build && maelstrom test -w broadcast --bin target/debug/broadcast --node-count 1 --time-limit 10
+            '';
+          })
+          (pkgs.writeShellApplication {
+            name = "broadcast-test";
+            text = ''
+              cargo build && maelstrom test -w broadcast --bin target/debug/broadcast --node-count 5 --time-limit 20 --rate 10
+            '';
+          })
         ];
       };
     };

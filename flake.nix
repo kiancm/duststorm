@@ -61,7 +61,7 @@
                 --bin target/debug/broadcast \
                 --node-count 5 \
                 --time-limit 20 \
-                --rate 10
+                --rate 100
             '';
           })
         ];

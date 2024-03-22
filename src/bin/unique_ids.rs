@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use duststorm::*;
 use serde::{Deserialize, Serialize};
 
-fn main() -> std::io::Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     Server.run(&mut GenerateNode::new())?;
     Ok(())
 }
@@ -40,8 +40,12 @@ fn generate_ok(common_body: CommonBody, meta: Meta, gen_ok: GenerateOk) -> Messa
     }
 }
 
-impl Node<Generate, GenerateOk> for GenerateNode {
-    fn handle_init(&mut self, message: &Message<Init>) -> Result<Message<InitOk>, Message<Error>> {
+impl Node<Generate> for GenerateNode {
+    fn handle_init(
+        &mut self,
+        message: &Message<Init>,
+        sender: &mut Sender,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let common_body = CommonBody {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
@@ -52,29 +56,34 @@ impl Node<Generate, GenerateOk> for GenerateNode {
             Ok(id) => {
                 self.id = Some(id);
                 self.seq = 0;
-                Ok(Message::init_ok(common_body, meta))
+                let message = Message::init_ok(common_body, meta);
+                sender.send(message)?
             }
-            Err(_) => Err(Message::error(
-                common_body,
-                meta,
-                Error {
-                    code: ErrorCode::MalformedRequest,
-                },
-            )),
-        }
+            Err(_) => {
+                let message = Message::error(
+                    common_body,
+                    meta,
+                    Error {
+                        code: ErrorCode::MalformedRequest,
+                    },
+                );
+                sender.send(message)?
+            }
+        };
+        Ok(())
     }
 
     fn handle(
         &mut self,
         message: &Message<Generate>,
-    ) -> Result<Message<GenerateOk>, Message<Error>> {
+        sender: &mut Sender,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let common_body = CommonBody {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
         };
         let meta = Meta::reply(&message.meta);
-
-        SystemTime::now()
+        let result = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_err| {
                 Message::error(
@@ -100,6 +109,12 @@ impl Node<Generate, GenerateOk> for GenerateNode {
                 let snowflake = timestamp_part | id_part | seq_part;
                 self.seq += 1;
                 Ok(generate_ok(common_body, meta, GenerateOk { id: snowflake }))
-            })
+            });
+        match result {
+            Ok(message) => sender.send(message)?,
+            Err(error_message) => sender.send(error_message)?,
+        };
+
+        Ok(())
     }
 }

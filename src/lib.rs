@@ -1,77 +1,68 @@
-use std::io::{stderr, stdin, stdout, Write};
+use std::io::{stderr, stdin, stdout, StderrLock, StdoutLock, Write};
 
 use serde::{Deserialize, Serialize};
 
 pub struct Server;
 impl Server {
-    pub fn run<I, O: Serialize>(&self, node: &mut impl Node<I, O>) -> std::io::Result<()>
+    pub fn run<I>(&self, node: &mut impl Node<I>) -> Result<(), Box<dyn std::error::Error>>
     where
         for<'a> I: Deserialize<'a> + Serialize,
     {
-        let mut stdout = stdout().lock();
-        let mut stderr = stderr().lock();
+        let mut sender = Sender::new();
         let mut input = stdin().lines();
         let line = input.next().expect("first message must be init")?;
         let init_request: Message<Init> = serde_json::from_str(&line)?;
-        let init_response = node.handle_init(&init_request);
-        let init_response = self.flatten_result(init_response);
-
-        serde_json::to_writer(&mut stdout, &init_response)?;
-        stdout.write_all(b"\n")?;
-
-        stderr.write_all(b"Request: ")?;
-        serde_json::to_writer_pretty(&mut stderr, &init_request)?;
-        stderr.write_all(b"\n")?;
-        stderr.write_all(b"Response: ")?;
-        serde_json::to_writer_pretty(&mut stderr, &init_response)?;
+        node.handle_init(&init_request, &mut sender)?;
 
         for line in input {
             let line = line?;
-            serde_json::to_writer_pretty(&mut stderr, &line)?;
             let req: Message<I> = serde_json::from_str(&line)?;
-            let res = node.handle(&req);
-            let res = self.flatten_result(res);
-
-            serde_json::to_writer(&mut stdout, &res)?;
-            stdout.write_all(b"\n")?;
-
-            stderr.write_all(b"\n")?;
-            stderr.write_all(b"Request: ")?;
-            serde_json::to_writer_pretty(&mut stderr, &req)?;
-            stderr.write_all(b"\n")?;
-            stderr.write_all(b"Response: ")?;
-            serde_json::to_writer_pretty(&mut stderr, &res)?;
-            stderr.write_all(b"\n")?;
+            node.handle(&req, &mut sender)?;
         }
         Ok(())
     }
+}
 
-    fn flatten_result<T>(
-        &self,
-        result: Result<Message<T>, Message<Error>>,
-    ) -> Message<BodyOrError<T>> {
-        match result {
-            Ok(ok) => Message {
-                meta: ok.meta,
-                body: Body {
-                    common: ok.body.common,
-                    custom: BodyOrError::Body(ok.body.custom),
-                },
-            },
-            Err(err) => Message {
-                meta: err.meta,
-                body: Body {
-                    common: err.body.common,
-                    custom: BodyOrError::Error(err.body.custom),
-                },
-            },
+pub struct Sender<'a> {
+    out: StdoutLock<'a>,
+    err: StderrLock<'a>,
+}
+
+impl<'a> Sender<'a> {
+    pub fn new() -> Self {
+        Self {
+            out: stdout().lock(),
+            err: stderr().lock(),
         }
+    }
+
+    pub fn send<T: Serialize>(
+        &mut self,
+        message: Message<T>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        serde_json::to_writer(&mut self.out, &message)?;
+        self.out.write_all(b"\n")?;
+        Ok(())
+    }
+
+    pub fn debug<T: Serialize>(&mut self, message: T) -> Result<(), Box<dyn std::error::Error>> {
+        serde_json::to_writer(&mut self.err, &message)?;
+        self.err.write_all(b"\n")?;
+        Ok(())
     }
 }
 
-pub trait Node<I, O> {
-    fn handle_init(&mut self, message: &Message<Init>) -> Result<Message<InitOk>, Message<Error>>;
-    fn handle(&mut self, message: &Message<I>) -> Result<Message<O>, Message<Error>>;
+pub trait Node<Req> {
+    fn handle_init(
+        &mut self,
+        message: &Message<Init>,
+        sender: &mut Sender,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn handle(
+        &mut self,
+        message: &Message<Req>,
+        sender: &mut Sender,
+    ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]

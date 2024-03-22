@@ -121,6 +121,18 @@ pub struct Body<T> {
     pub custom: T,
 }
 
+impl<T> Body<T> {
+    pub fn new(custom: T) -> Self {
+        Self {
+            common: CommonBody {
+                msg_id: None,
+                in_reply_to: None,
+            },
+            custom,
+        }
+    }
+}
+
 impl Message<InitOk> {
     pub fn init_ok(common_body: CommonBody, meta: Meta) -> Self {
         Self {

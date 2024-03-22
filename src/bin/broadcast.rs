@@ -117,28 +117,6 @@ impl BroadcastNode {
         }
     }
 
-    fn gossip(
-        &self,
-        sender: &mut Sender,
-        neighbors: &Vec<String>,
-        msg: &i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        for neighbor in neighbors {
-            let gossip = Message {
-                meta: Meta {
-                    src: self.node_id.as_ref().unwrap().clone(),
-                    dest: neighbor.to_string(),
-                },
-                body: Body::new(Broadcast::Gossip {
-                    message: *msg,
-                    recipients: neighbors.clone(),
-                }),
-            };
-            sender.send(gossip)?;
-        }
-        Ok(())
-    }
-
     fn make_gossip_to(
         &self,
         neighbors: &Vec<String>,

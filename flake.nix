@@ -20,6 +20,12 @@
           pkgs.bacon
           pkgs.openjdk21
           maelstrom
+          (pkgs.writeShellApplication {
+            name = "echo-test";
+            text = ''
+              cargo build && maelstrom test -w echo --bin target/debug/echo --node-count 1 --time-limit 10
+            '';
+          })
         ];
       };
     };

@@ -1,68 +1,43 @@
-use std::io::{stderr, stdin, stdout, StderrLock, StdoutLock, Write};
-
 use serde::{Deserialize, Serialize};
+use std::{
+    io::{stderr, stdin, stdout, BufRead},
+    sync::mpsc::Sender,
+    thread,
+};
 
 pub struct Server;
 impl Server {
-    pub fn run<I>(&self, node: &mut impl Node<I>) -> Result<(), Box<dyn std::error::Error>>
+    pub fn run<I, N: Node<I>>(&self) -> anyhow::Result<()>
     where
-        for<'a> I: Deserialize<'a> + Serialize,
+        for<'a> I: Deserialize<'a> + Serialize + Send + Sync + 'static,
     {
-        let mut sender = Sender::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sender = tx.clone();
+
         let mut input = stdin().lines();
         let line = input.next().expect("first message must be init")?;
         let init_request: Message<Init> = serde_json::from_str(&line)?;
-        node.handle_init(&init_request, &mut sender)?;
+        let mut node: N = init_request.try_into()?;
 
-        for line in input {
-            let line = line?;
-            let req: Message<I> = serde_json::from_str(&line)?;
-            node.handle(&req, &mut sender)?;
+        thread::spawn(move || -> anyhow::Result<()> {
+            let lines = stdin().lock().lines();
+            for line in lines {
+                let line = line?;
+                let message: Message<I> = serde_json::from_str(&line)?;
+                tx.clone().send(message)?;
+            }
+            anyhow::Result::Ok(())
+        });
+
+        for message in rx {
+            node.handle(&message, &sender)?;
         }
         Ok(())
     }
 }
 
-pub struct Sender<'a> {
-    out: StdoutLock<'a>,
-    err: StderrLock<'a>,
-}
-
-impl<'a> Sender<'a> {
-    pub fn new() -> Self {
-        Self {
-            out: stdout().lock(),
-            err: stderr().lock(),
-        }
-    }
-
-    pub fn send<T: Serialize>(
-        &mut self,
-        message: Message<T>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        serde_json::to_writer(&mut self.out, &message)?;
-        self.out.write_all(b"\n")?;
-        Ok(())
-    }
-
-    pub fn debug<T: Serialize>(&mut self, message: T) -> Result<(), Box<dyn std::error::Error>> {
-        serde_json::to_writer(&mut self.err, &message)?;
-        self.err.write_all(b"\n")?;
-        Ok(())
-    }
-}
-
-pub trait Node<Req> {
-    fn handle_init(
-        &mut self,
-        message: &Message<Init>,
-        sender: &mut Sender,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn handle(
-        &mut self,
-        message: &Message<Req>,
-        sender: &mut Sender,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+pub trait Node<T>: TryFrom<Message<Init>, Error = anyhow::Error> {
+    fn handle(&mut self, message: &Message<T>, sender: &Sender<Message<T>>) -> anyhow::Result<()>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -1,4 +1,9 @@
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    io::{stdout, Write},
+    sync::Arc,
+    thread,
+};
 
 use duststorm::*;
 use serde::{Deserialize, Serialize};
@@ -21,6 +26,10 @@ enum Broadcast {
         message: i32,
         recipients: Vec<String>,
     },
+    GossipOk {
+        node_id: String,
+        message: i32,
+    },
     Read,
     Topology {
         topology: HashMap<String, Vec<String>>,
@@ -31,6 +40,7 @@ enum Broadcast {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum BroadcastOk {
     BroadcastOk,
+    GossipOk,
     ReadOk { messages: Vec<i32> },
     TopologyOk,
 }
@@ -39,6 +49,7 @@ struct BroadcastNode {
     node_id: Option<String>,
     neighbors: Vec<String>,
     messages: Vec<i32>,
+    statuses: HashMap<i32, HashSet<String>>,
 }
 
 impl Node<Broadcast> for BroadcastNode {
@@ -49,7 +60,7 @@ impl Node<Broadcast> for BroadcastNode {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.node_id = Some(message.body.custom.node_id.clone());
         let reply = message.reply(InitOk::InitOk);
-        sender.send(reply)?;
+        sender.send(&reply)?;
 
         Ok(())
     }
@@ -63,15 +74,18 @@ impl Node<Broadcast> for BroadcastNode {
             Broadcast::Broadcast { message: msg } => {
                 self.messages.push(msg.clone());
                 for neighbor in &self.neighbors {
-                    let gossip = self.make_gossip(neighbor, msg);
-                    sender.send(gossip)?;
+                    let nodes = self.statuses.entry(*msg).or_insert_with(HashSet::new);
+                    if nodes.contains(neighbor) {
+                        let gossip = self.make_gossip(neighbor, msg);
+                        sender.send(&gossip)?;
+                    }
                 }
                 let reply = message.reply(BroadcastOk::BroadcastOk);
-                sender.send(reply)?;
+                sender.send(&reply)?;
             }
             Broadcast::Read => {
                 let reply = message.reply(self.read_ok());
-                sender.send(reply)?;
+                sender.send(&reply)?;
             }
             Broadcast::Topology { topology } => {
                 self.neighbors = topology
@@ -79,22 +93,40 @@ impl Node<Broadcast> for BroadcastNode {
                     .unwrap()
                     .clone();
                 let reply = message.reply(BroadcastOk::TopologyOk);
-                sender.send(reply)?;
+                sender.send(&reply)?;
             }
             Broadcast::Gossip {
                 message: msg,
                 recipients,
             } => {
                 if !self.messages.contains(msg) {
-                    self.messages.push(msg.clone());
+                    self.messages.push(*msg);
                     let mut new_recipients = recipients.clone();
                     new_recipients.extend(self.neighbors.clone());
+                    let sender = Arc::new(*sender);
                     for neighbor in &self.neighbors {
-                        if neighbor != &message.meta.src && !recipients.contains(&neighbor) {
-                            let gossip = self.make_gossip_to(&new_recipients, neighbor, msg);
-                            sender.send(gossip)?;
-                        }
+                        let sender = sender.clone();
+                        thread::spawn(move || {
+                            let nodes = self.statuses.entry(*msg).or_insert_with(HashSet::new);
+                            if nodes.contains(neighbor)
+                                && neighbor != &message.meta.src
+                                && !recipients.contains(neighbor)
+                            {
+                                nodes.insert(neighbor.clone());
+                                let gossip = self.make_gossip_to(&new_recipients, neighbor, msg);
+                                sender.send(&gossip);
+                            }
+                        });
                     }
+                    sender.send(&message.reply(BroadcastOk::GossipOk))?;
+                }
+            }
+            Broadcast::GossipOk {
+                node_id,
+                message: msg,
+            } => {
+                if let Some(nodes) = self.statuses.get_mut(msg) {
+                    nodes.remove(node_id);
                 }
             }
         };
@@ -108,6 +140,7 @@ impl BroadcastNode {
             node_id: None,
             neighbors: Vec::new(),
             messages: Vec::new(),
+            statuses: HashMap::new(),
         }
     }
 

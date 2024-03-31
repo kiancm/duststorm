@@ -1,10 +1,10 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{sync::mpsc::Sender, time::{SystemTime, UNIX_EPOCH}};
 
 use duststorm::*;
 use serde::{Deserialize, Serialize};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    Server.run(&mut GenerateNode::new())?;
+fn main() -> anyhow::Result<()> {
+    Server.run<Generate, GenerateNode>()?;
     Ok(())
 }
 
@@ -22,6 +22,7 @@ impl GenerateNode {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Generate {
     Generate,
+    GenerateOk { id: u64 }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -30,42 +31,22 @@ struct GenerateOk {
     pub id: u64,
 }
 
-fn generate_ok(common_body: CommonBody, meta: Meta, gen_ok: GenerateOk) -> Message<GenerateOk> {
+fn generate_ok(common_body: CommonBody, meta: Meta, id: u64) -> Message<Generate> {
     Message {
         meta,
         body: Body {
             common: common_body,
-            custom: gen_ok,
+            custom: Generate::GenerateOk { id },
         },
     }
 }
 
 impl Node<Generate> for GenerateNode {
-    fn handle_init(
-        &mut self,
-        message: &Message<Init>,
-        sender: &mut Sender,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        match message.body.custom.node_id[1..].parse() {
-            Ok(id) => {
-                self.id = Some(id);
-                self.seq = 0;
-                let reply = message.reply(InitOk::InitOk);
-                sender.send(reply)?
-            }
-            Err(_) => {
-                let error = message.error(ErrorCode::MalformedRequest.into());
-                sender.send(error)?
-            }
-        };
-        Ok(())
-    }
-
     fn handle(
         &mut self,
         message: &Message<Generate>,
-        sender: &mut Sender,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+        sender: &Sender<Generate>,
+    ) -> anyhow::Result<()> {
         let common_body = CommonBody {
             msg_id: None,
             in_reply_to: message.body.common.msg_id,
@@ -82,13 +63,21 @@ impl Node<Generate> for GenerateNode {
                 let seq_part = self.seq as u64;
                 let snowflake = timestamp_part | id_part | seq_part;
                 self.seq += 1;
-                Ok(generate_ok(common_body, meta, GenerateOk { id: snowflake }))
+                Ok(generate_ok(common_body, meta, snowflake))
             });
         match result {
-            Ok(message) => sender.send(message)?,
-            Err(error_message) => sender.send(error_message)?,
+            Ok(message) => sender.send(&message)?,
+            Err(error_message) => sender.send(&error_message)?,
         };
 
         Ok(())
+    }
+}
+
+impl TryFrom<Message<Init>> for GenerateNode {
+    type Error = anyhow::Error;
+
+    fn try_from(value: Message<Init>) -> Result<Self, Self::Error> {
+        Ok(GenerateNode::new())
     }
 }

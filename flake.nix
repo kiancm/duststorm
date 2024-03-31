@@ -3,7 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    maelstromPkg.url = "path:./maelstrom";
+    maelstromPkg.url = "github:kiancm/maelstrom-flake";
   };
 
   outputs = { self, nixpkgs, maelstromPkg, ... }:
